@@ -1,59 +1,118 @@
-# ---------------------------------------------------------------------------
-# CrowdSec Firewall Bouncer — values
-# ---------------------------------------------------------------------------
-
+# This chart does not publish or select a runtime image. Build or choose a
+# compatible image, push it to a trusted registry, and pin its digest here.
 image:
-  repository: debian
-  tag: "12-slim"
+  repository: ""
+  digest: ""
   pullPolicy: IfNotPresent
 
-# -- LAPI connection
-# The bouncer needs an API key registered with the LAPI.
-# Bootstrap: run .github/workflows/crowdsec-bootstrap.yml (GitHub Actions)
-# which calls `cscli bouncers add firewall-bouncer` and writes the key
-# into a Kubernetes Secret referenced by existingSecret below.
-config:
-  # LAPI URL (internal ClusterIP service)
-  # ⚠️  Match the actual name of your LAPI Service.
-  #     The official CrowdSec Helm chart creates "crowdsec-service".
-  apiUrl: "http://crowdsec-service.crowdsec:8080"
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
 
-  # Backend: iptables or nftables
-  backend: iptables
-
-  # Update frequency for pulling decisions from LAPI
-  updateFrequency: 10s
-
-  # Deny action: DROP or REJECT
-  denyAction: DROP
-
-  # Log denied requests
-  denyLog: true
-
-# -- The bouncer API key.
-# ⚠️  Never set a real key here. This is only for local dev/testing.
-#     In production the key is managed by the GitHub Actions workflow
-#     and stored in a Kubernetes Secret (see existingSecret below).
-bouncerKey: "change-me"
-
-# -- Reference an existing Secret containing the API key.
-# The Secret must have key "api-key" in the same namespace.
-# Created automatically by .github/workflows/crowdsec-bootstrap.yml.
-# If set, overrides bouncerKey.
+# The Secret must be provisioned outside Helm. Never commit the API key.
 existingSecret:
   name: ""
-  key: "api-key"
+  key: api-key
 
-# -- DaemonSet settings
+config:
+  # Environment-specific CrowdSec LAPI URL, for example:
+  # http://crowdsec-service.crowdsec:8080
+  apiUrl: ""
+  backend: iptables
+  updateFrequency: 10s
+  denyAction: DROP
+  denyLog: true
+  disableIPv4: false
+  disableIPv6: false
+  supportedDecisionTypes:
+    - ban
+
+  iptables:
+    chains:
+      - INPUT
+    ipv4Chains: []
+    ipv6Chains: []
+    addRuleComments: true
+    blacklistsIPv4: crowdsec-blacklists
+    blacklistsIPv6: crowdsec6-blacklists
+    ipsetType: nethash
+
+  nftables:
+    hooks:
+      - input
+    ipv4:
+      enabled: true
+      setOnly: false
+      table: crowdsec
+      chain: crowdsec-chain
+      priority: -10
+    ipv6:
+      enabled: true
+      setOnly: false
+      table: crowdsec6
+      chain: crowdsec6-chain
+      priority: -10
+
+metrics:
+  enabled: true
+  port: 60601
+  service:
+    enabled: true
+    annotations: {}
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 30s
+
+probes:
+  startup:
+    periodSeconds: 2
+    timeoutSeconds: 1
+    failureThreshold: 30
+  readiness:
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 3
+  liveness:
+    periodSeconds: 20
+    timeoutSeconds: 1
+    failureThreshold: 3
+
 daemonset:
   updateStrategy: RollingUpdate
+  terminationGracePeriodSeconds: 30
 
-# -- Node selector, tolerations, affinity
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_ADMIN
+      - NET_RAW
+
 nodeSelector: {}
 tolerations: []
 affinity: {}
+priorityClassName: ""
 
-# -- Resource requests/limits
 resources:
   requests:
     cpu: 10m

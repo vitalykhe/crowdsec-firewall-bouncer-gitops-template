@@ -1,28 +1,44 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "crowdsec-firewall-bouncer.name" . }}
+  name: {{ include "crowdsec-firewall-bouncer.fullname" . }}
   labels:
     {{- include "crowdsec-firewall-bouncer.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "crowdsec-firewall-bouncer.name" . }}
+      {{- include "crowdsec-firewall-bouncer.selectorLabels" . | nindent 6 }}
   updateStrategy:
     type: {{ .Values.daemonset.updateStrategy }}
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
-        app.kubernetes.io/name: {{ include "crowdsec-firewall-bouncer.name" . }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- include "crowdsec-firewall-bouncer.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "crowdsec-firewall-bouncer.fullname" . }}
+      automountServiceAccountToken: false
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      serviceAccountName: {{ include "crowdsec-firewall-bouncer.name" . }}
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
+      terminationGracePeriodSeconds: {{ .Values.daemonset.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      nodeSelector:
+        kubernetes.io/os: linux
+        {{- with omit .Values.nodeSelector "kubernetes.io/os" }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
@@ -31,97 +47,59 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      initContainers:
-        - name: install
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          securityContext:
-            privileged: true
-          env:
-            - name: API_KEY
-              valueFrom:
-                secretKeyRef:
-                  {{- if .Values.existingSecret.name }}
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.key }}
-                  {{- else }}
-                  name: {{ include "crowdsec-firewall-bouncer.name" . }}-key
-                  key: api-key
-                  {{- end }}
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -e
-              apt update -qq
-              apt install -y -qq curl sudo
-              curl -s https://install.crowdsec.net | sh
-              apt install -y -qq crowdsec-firewall-bouncer-iptables
-              # Copy binary and iptables to shared volume
-              cp /usr/bin/crowdsec-firewall-bouncer /bouncer/
-              # Ensure iptables, ipset and related tools are available
-              apt install -y -qq iptables ipset
-              cp "$(which iptables)" /bouncer/iptables
-              cp "$(which iptables-save)" /bouncer/iptables-save 2>/dev/null || true
-              cp "$(which iptables-restore)" /bouncer/iptables-restore 2>/dev/null || true
-              cp "$(which ip6tables)" /bouncer/ip6tables
-              cp "$(which ip6tables-save)" /bouncer/ip6tables-save 2>/dev/null || true
-              cp "$(which ip6tables-restore)" /bouncer/ip6tables-restore 2>/dev/null || true
-              cp "$(which ipset)" /bouncer/ipset
-              # Copy shared libraries
-              mkdir -p /bouncer/lib
-              ldd /usr/bin/crowdsec-firewall-bouncer 2>/dev/null | \
-                awk '/=> \// {print $3}' | xargs -I{} cp {} /bouncer/lib/ 2>/dev/null || true
-          volumeMounts:
-            - name: bouncer-bin
-              mountPath: /bouncer
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       containers:
         - name: bouncer
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /usr/local/bin/crowdsec-firewall-bouncer
+          args:
+            - -c
+            - /config/crowdsec-firewall-bouncer.yaml
           securityContext:
-            privileged: true
+            {{- toYaml .Values.securityContext | nindent 12 }}
           env:
             - name: API_KEY
               valueFrom:
                 secretKeyRef:
-                  {{- if .Values.existingSecret.name }}
                   name: {{ .Values.existingSecret.name }}
                   key: {{ .Values.existingSecret.key }}
-                  {{- else }}
-                  name: {{ include "crowdsec-firewall-bouncer.name" . }}-key
-                  key: api-key
-                  {{- end }}
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -e
-              # Ensure iptables modules are loaded
-              modprobe iptable_filter 2>/dev/null || true
-              modprobe ip6table_filter 2>/dev/null || true
-              modprobe ip_set 2>/dev/null || true
-              modprobe xt_set 2>/dev/null || true
-              # Add /bouncer to PATH so bouncer can find ipset, iptables-save, etc.
-              export PATH=/bouncer:$PATH
-              export LD_LIBRARY_PATH=/bouncer/lib:$LD_LIBRARY_PATH
-              exec /bouncer/crowdsec-firewall-bouncer -c /config/crowdsec-firewall-bouncer.yaml
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          startupProbe:
+            tcpSocket:
+              port: metrics
+            {{- toYaml .Values.probes.startup | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: metrics
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: metrics
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
-            - name: bouncer-bin
-              mountPath: /bouncer
-              readOnly: true
             - name: config
               mountPath: /config
               readOnly: true
-            - name: xtables-lock
+            - name: run
               mountPath: /run
+            - name: tmp
+              mountPath: /tmp
       volumes:
-        - name: bouncer-bin
-          emptyDir: {}
         - name: config
           configMap:
-            name: {{ include "crowdsec-firewall-bouncer.name" . }}-config
-        - name: xtables-lock
+            name: {{ include "crowdsec-firewall-bouncer.fullname" . }}-config
+        - name: run
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}

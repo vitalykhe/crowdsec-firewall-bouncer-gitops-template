@@ -1,35 +1,53 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "crowdsec-firewall-bouncer.name" . }}-config
+  name: {{ include "crowdsec-firewall-bouncer.fullname" . }}-config
   labels:
     {{- include "crowdsec-firewall-bouncer.labels" . | nindent 4 }}
 data:
   crowdsec-firewall-bouncer.yaml: |
     mode: {{ .Values.config.backend }}
     update_frequency: {{ .Values.config.updateFrequency }}
-    log_mode: file
-    log_dir: /var/log/
+    log_mode: stdout
     log_level: info
-    log_compression: true
-    log_max_size: 100
-    log_max_backups: 3
-    log_max_age: 30
-    api_url: {{ .Values.config.apiUrl }}
+    api_url: {{ .Values.config.apiUrl | quote }}
     api_key: ${API_KEY}
     insecure_skip_verify: false
-    disable_ipv6: false
+    disable_ipv4: {{ .Values.config.disableIPv4 }}
+    disable_ipv6: {{ .Values.config.disableIPv6 }}
     deny_action: {{ .Values.config.denyAction }}
     deny_log: {{ .Values.config.denyLog }}
     supported_decisions_types:
-      - ban
-    blacklists_ipv4: crowdsec-blacklists
-    blacklists_ipv6: crowdsec6-blacklists
-    ipset_type: nethash
+      {{- toYaml .Values.config.supportedDecisionTypes | nindent 6 }}
+    {{- if eq .Values.config.backend "iptables" }}
+    blacklists_ipv4: {{ .Values.config.iptables.blacklistsIPv4 }}
+    blacklists_ipv6: {{ .Values.config.iptables.blacklistsIPv6 }}
+    ipset_type: {{ .Values.config.iptables.ipsetType }}
     iptables_chains:
-      - INPUT
-    iptables_add_rule_comments: true
+      {{- toYaml .Values.config.iptables.chains | nindent 6 }}
+    iptables_v4_chains:
+      {{- toYaml .Values.config.iptables.ipv4Chains | nindent 6 }}
+    iptables_v6_chains:
+      {{- toYaml .Values.config.iptables.ipv6Chains | nindent 6 }}
+    iptables_add_rule_comments: {{ .Values.config.iptables.addRuleComments }}
+    {{- else }}
     nftables:
       ipv4:
-        enabled: true
-        set-only: false
+        enabled: {{ .Values.config.nftables.ipv4.enabled }}
+        set-only: {{ .Values.config.nftables.ipv4.setOnly }}
+        table: {{ .Values.config.nftables.ipv4.table }}
+        chain: {{ .Values.config.nftables.ipv4.chain }}
+        priority: {{ .Values.config.nftables.ipv4.priority }}
+      ipv6:
+        enabled: {{ .Values.config.nftables.ipv6.enabled }}
+        set-only: {{ .Values.config.nftables.ipv6.setOnly }}
+        table: {{ .Values.config.nftables.ipv6.table }}
+        chain: {{ .Values.config.nftables.ipv6.chain }}
+        priority: {{ .Values.config.nftables.ipv6.priority }}
+    nftables_hooks:
+      {{- toYaml .Values.config.nftables.hooks | nindent 6 }}
+    {{- end }}
+    prometheus:
+      enabled: {{ .Values.metrics.enabled }}
+      listen_addr: 0.0.0.0
+      listen_port: {{ .Values.metrics.port | quote }}

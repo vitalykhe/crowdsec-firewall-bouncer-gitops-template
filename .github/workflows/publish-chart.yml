@@ -1,66 +1,151 @@
-name: publish-chart
+name: validate-and-publish-chart
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/publish-chart.yml"
+      - "charts/**"
+      - "images/**"
+      - "scripts/**"
   push:
     branches: [main]
     paths:
-      - "charts/**/Chart.yaml"
-      - "charts/**/values.yaml"
-      - "charts/**/templates/**"
+      - ".github/workflows/publish-chart.yml"
+      - "charts/**"
+      - "images/**"
+      - "scripts/**"
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  lint:
+  chart:
+    name: Validate Helm chart
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
-          version: latest
-      - name: Lint charts
+          version: v4.2.0
+
+      - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: "0.8.0"
+          KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
         run: |
-          for chart in charts/*/; do
-            echo "Linting $chart..."
-            helm lint "$chart"
-          done
+          set -euo pipefail
+          archive="$RUNNER_TEMP/kubeconform.tar.gz"
+          install_dir="$RUNNER_TEMP/kubeconform"
+          curl --fail --silent --show-error --location \
+            --output "$archive" \
+            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          printf '%s  %s\n' "$KUBECONFORM_SHA256" "$archive" | sha256sum --check --strict -
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" kubeconform
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Test chart behavior
+        run: sh scripts/test-chart.sh
+
+      - name: Validate rendered Kubernetes resources
+        run: |
+          set -euo pipefail
+          chart=charts/crowdsec-firewall-bouncer
+          helm template test "$chart" --namespace crowdsec \
+            -f "$chart/ci/iptables-values.yaml" > "$RUNNER_TEMP/iptables.yaml"
+          helm template test "$chart" --namespace crowdsec \
+            -f "$chart/ci/nftables-values.yaml" > "$RUNNER_TEMP/nftables.yaml"
+          kubeconform \
+            -strict \
+            -summary \
+            -kubernetes-version 1.24.0 \
+            "$RUNNER_TEMP/iptables.yaml" \
+            "$RUNNER_TEMP/nftables.yaml"
+
+  reference-image:
+    name: Build reference image (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d5dbed6a46 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Build without publishing
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: images/crowdsec-firewall-bouncer
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: security-charts/crowdsec-firewall-bouncer:test
+
+      - name: Test image contract
+        run: sh scripts/test-image.sh security-charts/crowdsec-firewall-bouncer:test
 
   publish:
-    needs: [lint]
+    name: Publish Helm chart
+    if: github.event_name != 'pull_request'
+    needs:
+      - chart
+      - reference-image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
-          version: latest
+          version: v4.2.0
 
       - name: Login to GHCR
+        env:
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          helm registry login ghcr.io \
+          printf '%s' "$REGISTRY_PASSWORD" | helm registry login ghcr.io \
             --username "${{ github.actor }}" \
-            --password "${{ secrets.GITHUB_TOKEN }}"
+            --password-stdin
 
       - name: Package and push charts
         run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/charts"
           for chart_dir in charts/*/; do
-            chart_name=$(basename "$chart_dir")
-            echo "Processing $chart_name..."
-            helm package "$chart_dir" --destination /tmp/charts
-            chart_package=$(ls /tmp/charts/*.tgz | head -1)
-            helm push "$chart_package" oci://ghcr.io/${{ github.repository }}
-            echo "✓ Published $chart_name"
+            chart_package="$(helm package "$chart_dir" --destination "$RUNNER_TEMP/charts" | \
+              sed -n 's/^Successfully packaged chart and saved it to: //p')"
+            test -n "$chart_package"
+            test -f "$chart_package"
+            helm push "$chart_package" "oci://ghcr.io/${{ github.repository }}"
           done
 
-      - name: Summary
+      - name: Write job summary
         run: |
-          echo "## Published Charts" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          for chart_dir in charts/*/; do
-            chart_name=$(basename "$chart_dir")
-            version=$(grep '^version:' "$chart_dir/Chart.yaml" | awk '{print $2}')
-            echo "- \`$chart_name\` v$version" >> "$GITHUB_STEP_SUMMARY"
-            echo "  → \`oci://ghcr.io/${{ github.repository }}/$chart_name\`" >> "$GITHUB_STEP_SUMMARY"
-          done
+          set -euo pipefail
+          {
+            echo "## Published Charts"
+            echo
+            for chart_dir in charts/*/; do
+              chart_name="$(basename "$chart_dir")"
+              chart_version="$(helm show chart "$chart_dir" | awk '$1 == "version:" {print $2}')"
+              echo "- \`$chart_name\` v$chart_version"
+              echo "  → \`oci://ghcr.io/${{ github.repository }}/$chart_name\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

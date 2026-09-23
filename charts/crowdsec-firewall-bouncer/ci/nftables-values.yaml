@@ -1,0 +1,12 @@
+image:
+  repository: registry.example.com/security/crowdsec-firewall-bouncer
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+existingSecret:
+  name: crowdsec-firewall-bouncer-key
+  key: api-key
+
+config:
+  apiUrl: http://crowdsec-service.crowdsec:8080
+  backend: nftables
+

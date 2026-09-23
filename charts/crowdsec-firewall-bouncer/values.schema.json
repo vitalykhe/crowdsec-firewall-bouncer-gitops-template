@@ -1,0 +1,193 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "existingSecret", "config"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {"name": {"type": "string", "minLength": 1}}
+      }
+    },
+    "nameOverride": {"type": "string"},
+    "fullnameOverride": {"type": "string"},
+    "existingSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "key"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "key": {"type": "string", "minLength": 1}
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiUrl", "backend", "updateFrequency", "denyAction", "denyLog", "disableIPv4", "disableIPv6", "supportedDecisionTypes", "iptables", "nftables"],
+      "properties": {
+        "apiUrl": {"type": "string", "pattern": "^https?://[^[:space:]]+$"},
+        "backend": {"type": "string", "enum": ["iptables", "nftables"]},
+        "updateFrequency": {"type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$"},
+        "denyAction": {"type": "string", "enum": ["DROP", "REJECT"]},
+        "denyLog": {"type": "boolean"},
+        "disableIPv4": {"type": "boolean"},
+        "disableIPv6": {"type": "boolean"},
+        "supportedDecisionTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "iptables": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chains", "ipv4Chains", "ipv6Chains", "addRuleComments", "blacklistsIPv4", "blacklistsIPv6", "ipsetType"],
+          "properties": {
+            "chains": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "ipv4Chains": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "ipv6Chains": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "addRuleComments": {"type": "boolean"},
+            "blacklistsIPv4": {"type": "string", "minLength": 1},
+            "blacklistsIPv6": {"type": "string", "minLength": 1},
+            "ipsetType": {"type": "string", "minLength": 1}
+          }
+        },
+        "nftables": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hooks", "ipv4", "ipv6"],
+          "properties": {
+            "hooks": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "enum": ["input", "forward"]}},
+            "ipv4": {"$ref": "#/definitions/nftablesFamily"},
+            "ipv6": {"$ref": "#/definitions/nftablesFamily"}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": ["disableIPv4", "disableIPv6"],
+            "properties": {"disableIPv4": {"const": true}, "disableIPv6": {"const": true}}
+          }
+        },
+        {
+          "if": {"properties": {"backend": {"const": "iptables"}}},
+          "then": {
+            "properties": {
+              "iptables": {
+                "anyOf": [
+                  {"properties": {"chains": {"minItems": 1}}},
+                  {"properties": {"ipv4Chains": {"minItems": 1}}},
+                  {"properties": {"ipv6Chains": {"minItems": 1}}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"backend": {"const": "nftables"}}},
+          "then": {
+            "properties": {
+              "nftables": {
+                "not": {
+                  "properties": {"ipv4": {"properties": {"enabled": {"const": false}}}, "ipv6": {"properties": {"enabled": {"const": false}}}}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "port", "service", "serviceMonitor"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "annotations"],
+          "properties": {"enabled": {"type": "boolean"}, "annotations": {"type": "object"}}
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "labels", "interval"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "labels": {"type": "object"},
+            "interval": {"type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$"}
+          }
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startup", "readiness", "liveness"],
+      "properties": {
+        "startup": {"$ref": "#/definitions/probe"},
+        "readiness": {"$ref": "#/definitions/probe"},
+        "liveness": {"$ref": "#/definitions/probe"}
+      }
+    },
+    "daemonset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["updateStrategy", "terminationGracePeriodSeconds"],
+      "properties": {
+        "updateStrategy": {"type": "string", "enum": ["RollingUpdate", "OnDelete"]},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "podAnnotations": {"type": "object"},
+    "podLabels": {"type": "object"},
+    "podSecurityContext": {"type": "object"},
+    "securityContext": {"type": "object"},
+    "nodeSelector": {"type": "object"},
+    "tolerations": {"type": "array"},
+    "affinity": {"type": "object"},
+    "priorityClassName": {"type": "string"},
+    "resources": {"type": "object"}
+  },
+  "definitions": {
+    "nftablesFamily": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "setOnly", "table", "chain", "priority"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "setOnly": {"type": "boolean"},
+        "table": {"type": "string", "minLength": 1},
+        "chain": {"type": "string", "minLength": 1},
+        "priority": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647}
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["periodSeconds", "timeoutSeconds", "failureThreshold"],
+      "properties": {
+        "periodSeconds": {"type": "integer", "minimum": 1},
+        "timeoutSeconds": {"type": "integer", "minimum": 1},
+        "failureThreshold": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}
