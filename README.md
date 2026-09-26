@@ -163,21 +163,19 @@ jobs:
           kubectl -n crowdsec wait --for=condition=ready pod \
             -l k8s-app=crowdsec,type=lapi --timeout=120s
 
-      - name: Register or rotate bouncer key
-        id: bouncer
+      - name: Register bouncer and create Kubernetes Secret
         run: |
+          set -euo pipefail
           LAPI_POD=$(kubectl -n crowdsec get pod \
             -l k8s-app=crowdsec,type=lapi -o jsonpath='{.items[0].metadata.name}')
           kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers delete firewall-bouncer 2>/dev/null || true
-          API_KEY=$(kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add firewall-bouncer -o raw)
-          echo "::add-mask::$API_KEY"
-          echo "api-key=$API_KEY" >> "$GITHUB_OUTPUT"
-
-      - name: Create Kubernetes Secret
-        run: |
-          kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
-            --from-literal=api-key="${{ steps.bouncer.outputs.api-key }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n crowdsec exec "$LAPI_POD" -- \
+            cscli bouncers add firewall-bouncer -o raw | \
+            tr -d '\r\n' | \
+            kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
+              --from-file=api-key=/dev/stdin \
+              --dry-run=client -o yaml | \
+            kubectl apply -f -
 
       - name: Restart bouncer DaemonSet
         run: |
@@ -190,11 +188,10 @@ Run it: **GitHub → Actions → crowdsec-bootstrap → Run workflow**
 
 ```bash
 kubectl -n crowdsec exec deployment/crowdsec-lapi -- \
-  cscli bouncers add firewall-bouncer
-# copy the returned key
-
-kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
-  --from-literal=api-key='<KEY>'
+  cscli bouncers add firewall-bouncer -o raw | \
+  tr -d '\r\n' | \
+  kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
+    --from-file=api-key=/dev/stdin
 
 kubectl -n crowdsec rollout restart daemonset crowdsec-firewall-bouncer
 ```
@@ -361,21 +358,19 @@ jobs:
           kubectl -n crowdsec wait --for=condition=ready pod \
             -l k8s-app=crowdsec,type=lapi --timeout=120s
 
-      - name: Register or rotate bouncer key
-        id: bouncer
+      - name: Register bouncer and create Kubernetes Secret
         run: |
+          set -euo pipefail
           LAPI_POD=$(kubectl -n crowdsec get pod \
             -l k8s-app=crowdsec,type=lapi -o jsonpath='{.items[0].metadata.name}')
           kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers delete firewall-bouncer 2>/dev/null || true
-          API_KEY=$(kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add firewall-bouncer -o raw)
-          echo "::add-mask::$API_KEY"
-          echo "api-key=$API_KEY" >> "$GITHUB_OUTPUT"
-
-      - name: Create Kubernetes Secret
-        run: |
-          kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
-            --from-literal=api-key="${{ steps.bouncer.outputs.api-key }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n crowdsec exec "$LAPI_POD" -- \
+            cscli bouncers add firewall-bouncer -o raw | \
+            tr -d '\r\n' | \
+            kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
+              --from-file=api-key=/dev/stdin \
+              --dry-run=client -o yaml | \
+            kubectl apply -f -
 
       - name: Restart bouncer DaemonSet
         run: |
@@ -388,11 +383,10 @@ jobs:
 
 ```bash
 kubectl -n crowdsec exec deployment/crowdsec-lapi -- \
-  cscli bouncers add firewall-bouncer
-# скопировать ключ
-
-kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
-  --from-literal=api-key='<KEY>'
+  cscli bouncers add firewall-bouncer -o raw | \
+  tr -d '\r\n' | \
+  kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
+    --from-file=api-key=/dev/stdin
 
 kubectl -n crowdsec rollout restart daemonset crowdsec-firewall-bouncer
 ```
