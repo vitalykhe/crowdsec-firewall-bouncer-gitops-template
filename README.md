@@ -1,4 +1,4 @@
-# security-charts — CrowdSec Firewall Bouncer for Kubernetes
+# crowdsec-firewall-bouncer-gitops-template
 
 ![Helm](https://img.shields.io/badge/Helm-3+-blue)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.24+-blue)
@@ -6,7 +6,9 @@
 ![OCI](https://img.shields.io/badge/OCI-GHCR-orange)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/crowdsec-firewall-bouncer-for-kubernetes)](https://artifacthub.io/packages/search?repo=crowdsec-firewall-bouncer-for-kubernetes)
 
-Reusable Helm charts for **Kubernetes cluster security infrastructure**. Deploy **CrowdSec firewall bouncer** as a DaemonSet to block malicious IPs (brute-force bots, `.env` scanners) at the **node level** via iptables/nftables, before traffic reaches **ingress-nginx**.
+A reusable GitOps template for deploying **CrowdSec Firewall Bouncer** as a
+Kubernetes DaemonSet. It blocks malicious IPs at the **node level** through
+iptables/nftables, before traffic reaches **ingress-nginx**.
 
 ## What problem it solves
 
@@ -71,12 +73,12 @@ Requires: **CrowdSec LAPI** + **ingress-nginx with `hostNetwork`** + **Kubernete
 
 ### 1. Add source repo to ArgoCD Project
 
-Add `security-charts` to `sourceRepos` in your Project (e.g. `cluster-infra`):
+Add this repository to `sourceRepos` in your Project (e.g. `cluster-infra`):
 
 ```yaml
 spec:
   sourceRepos:
-    - https://github.com/vitalykhe/security-charts.git
+    - https://github.com/vitalykhe/crowdsec-firewall-bouncer-gitops-template.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: crowdsec
@@ -95,7 +97,7 @@ metadata:
 spec:
   project: cluster-infra
   source:
-    repoURL: https://github.com/vitalykhe/security-charts.git
+    repoURL: https://github.com/vitalykhe/crowdsec-firewall-bouncer-gitops-template.git
     targetRevision: main
     path: charts/crowdsec-firewall-bouncer
     helm:
@@ -118,7 +120,8 @@ spec:
 
 ```yaml
 source:
-  repoURL: oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer
+  repoURL: ghcr.io/vitalykhe/crowdsec-firewall-bouncer-gitops-template
+  chart: crowdsec-firewall-bouncer
   targetRevision: 0.1.0
 ```
 
@@ -133,6 +136,9 @@ base64 < ~/.kube/config | tr -d '\n'
 | Secret | Description |
 |---|---|
 | `KUBE_CONFIG_B64` | base64-encoded kubeconfig with access to the cluster and `crowdsec` namespace |
+
+Also set the repository variable `KUBECTL_VERSION` to a full `vX.Y.Z` version
+compatible with your cluster. Do not use `latest`.
 
 ### 4. Register bouncer & create API key Secret
 
@@ -150,7 +156,9 @@ jobs:
     env:
       KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
     steps:
-      - uses: azure/setup-kubectl@v4
+      - uses: Azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: ${{ vars.KUBECTL_VERSION }}
 
       - name: Write kubeconfig
         run: |
@@ -199,9 +207,9 @@ kubectl -n crowdsec rollout restart daemonset crowdsec-firewall-bouncer
 ### Plain Helm (without ArgoCD)
 
 ```bash
-helm repo add security-charts oci://ghcr.io/vitalykhe/security-charts
 helm upgrade --install crowdsec-firewall-bouncer \
-  security-charts/crowdsec-firewall-bouncer \
+  oci://ghcr.io/vitalykhe/crowdsec-firewall-bouncer-gitops-template/crowdsec-firewall-bouncer \
+  --version 0.1.0 \
   --namespace crowdsec --create-namespace \
   --set existingSecret.name=crowdsec-firewall-bouncer-key \
   --set existingSecret.key=api-key \
@@ -212,7 +220,8 @@ Or with a local values file:
 
 ```bash
 helm upgrade --install crowdsec-firewall-bouncer \
-  oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer \
+  oci://ghcr.io/vitalykhe/crowdsec-firewall-bouncer-gitops-template/crowdsec-firewall-bouncer \
+  --version 0.1.0 \
   --namespace crowdsec --create-namespace \
   -f my-values.yaml
 ```
@@ -266,12 +275,12 @@ helm lint charts/crowdsec-firewall-bouncer/
 
 ### 1. Добавить source repo в ArgoCD Project
 
-В `Project` (например, `cluster-infra`) добавить `security-charts` в `sourceRepos`:
+В `Project` (например, `cluster-infra`) добавить этот репозиторий в `sourceRepos`:
 
 ```yaml
 spec:
   sourceRepos:
-    - https://github.com/vitalykhe/security-charts.git
+    - https://github.com/vitalykhe/crowdsec-firewall-bouncer-gitops-template.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: crowdsec
@@ -290,7 +299,7 @@ metadata:
 spec:
   project: cluster-infra
   source:
-    repoURL: https://github.com/vitalykhe/security-charts.git
+    repoURL: https://github.com/vitalykhe/crowdsec-firewall-bouncer-gitops-template.git
     targetRevision: main
     path: charts/crowdsec-firewall-bouncer
     helm:
@@ -313,7 +322,8 @@ spec:
 
 ```yaml
 source:
-  repoURL: oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer
+  repoURL: ghcr.io/vitalykhe/crowdsec-firewall-bouncer-gitops-template
+  chart: crowdsec-firewall-bouncer
   targetRevision: 0.1.0
 ```
 
@@ -328,6 +338,9 @@ base64 < ~/.kube/config | tr -d '\n'
 | Secret | Описание |
 |---|---|
 | `KUBE_CONFIG_B64` | base64-encoded kubeconfig с доступом к кластеру и namespace `crowdsec` |
+
+Также задайте repository variable `KUBECTL_VERSION` с полной версией формата
+`vX.Y.Z`, совместимой с кластером. Не используйте `latest`.
 
 ### 4. Зарегистрировать bouncer и создать Secret с API-ключом
 
@@ -345,7 +358,9 @@ jobs:
     env:
       KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
     steps:
-      - uses: azure/setup-kubectl@v4
+      - uses: Azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: ${{ vars.KUBECTL_VERSION }}
 
       - name: Write kubeconfig
         run: |
@@ -394,9 +409,9 @@ kubectl -n crowdsec rollout restart daemonset crowdsec-firewall-bouncer
 ### Развёртывание без ArgoCD (plain Helm)
 
 ```bash
-helm repo add security-charts oci://ghcr.io/vitalykhe/security-charts
 helm upgrade --install crowdsec-firewall-bouncer \
-  security-charts/crowdsec-firewall-bouncer \
+  oci://ghcr.io/vitalykhe/crowdsec-firewall-bouncer-gitops-template/crowdsec-firewall-bouncer \
+  --version 0.1.0 \
   --namespace crowdsec --create-namespace \
   --set existingSecret.name=crowdsec-firewall-bouncer-key \
   --set existingSecret.key=api-key \
@@ -407,7 +422,8 @@ helm upgrade --install crowdsec-firewall-bouncer \
 
 ```bash
 helm upgrade --install crowdsec-firewall-bouncer \
-  oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer \
+  oci://ghcr.io/vitalykhe/crowdsec-firewall-bouncer-gitops-template/crowdsec-firewall-bouncer \
+  --version 0.1.0 \
   --namespace crowdsec --create-namespace \
   -f my-values.yaml
 ```

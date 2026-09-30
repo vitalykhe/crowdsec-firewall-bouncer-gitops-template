@@ -7,9 +7,9 @@ description: |
 type: application
 version: 0.1.0
 appVersion: v0.0.34
-home: https://github.com/vitalykhe/security-charts
+home: https://github.com/vitalykhe/crowdsec-firewall-bouncer-gitops-template
 sources:
-  - https://github.com/vitalykhe/security-charts
+  - https://github.com/vitalykhe/crowdsec-firewall-bouncer-gitops-template
   - https://github.com/crowdsecurity/cs-firewall-bouncer
 keywords:
   - crowdsec
